@@ -119,18 +119,44 @@ response = client.responses.create(
 )
 ```
 
-## 6. コンテキスト注入パターン
+## 6. ユーザー固有データの注入パターン
 
-### user vs assistant どちらにコンテキストを載せるか
+`developer` ロールが使えない制約下で、アプリがユーザー固有のデータ（過去の申請履歴等）をエージェントに渡す方法は3つある。
+**ただし検証の結果、確実にデータが反映されるのは Function Calling 系のみ**（詳細は `docs/sdk-architecture.md` 参照）。
 
-`developer` ロールが使えない制約下で、アプリがユーザー固有のデータ（過去の申請履歴等）を注入する場合。
+### パターン比較
 
-| 方式 | モデルの解釈 | インジェクション耐性 | トレースログ |
-|------|-------------|---------------------|-------------|
-| `user` に全部載せる | 「ユーザーの指示」→ 命令として従おうとする | 低い（指示として実行される恐れ） | コンテキストとユーザー入力が混在、区別不能 |
-| `assistant` にコンテキスト + `user` に質問 | 「自分の過去の出力」→ 参照データとして扱う | 高い（命令として解釈されにくい） | 明確に分離、デバッグ・評価に有利 |
+| | ① Function Calling（推奨） | ② assistant ロール注入 | ③ user ロール注入（非推奨） |
+|---|---|---|---|
+| 仕組み | エージェントが必要時に `get_user_history` 等を呼ぶ → クライアントが実行して結果を返送 | `assistant` ロールにデータを載せて毎回送信 | `user` ロールにデータを詰め込む |
+| トークン効率 | ✅ 必要な時だけ取得 | ❌ 毎回全データ送信 | ❌ 毎回全データ送信 |
+| セキュリティ | ✅ **クライアントが実行を制御** — 認証済みユーザーのデータのみ返す。エージェントの引数は信用不要 | ⚠️ 命令として解釈されにくいが、データ内容がプロンプトに入る | ❌ 「ユーザーの指示」として解釈されうる |
+| インジェクション耐性 | ✅ データはツール結果として渡される（会話コンテキスト外） | ⚠️ 中（参照データとして扱われる） | ❌ 低（命令として実行される恐れ） |
+| エージェントの自律性 | ✅ エージェントが「何の情報が必要か」を判断 | ❌ アプリが「何を渡すか」を事前に決める | ❌ 同左 |
+| レイテンシ | ⚠️ 2往復以上（function_call → 結果返送） | ✅ 1往復 | ✅ 1往復 |
+| 利用条件 | エージェント定義に FunctionTool の登録が必要 | どのエージェントでも可 | どのエージェントでも可 |
 
-**推奨: `assistant` ロールにコンテキスト、`user` ロールにユーザー入力**
+### ① Function Calling（推奨）
+
+エージェントに `FunctionTool` を登録し、必要時にクライアント経由でデータを取得させる。
+
+```python
+# エージェント側: get_user_history ツールを定義
+# クライアント側: function_call を受け取って実行
+def execute_function(name, arguments, session_user_id):
+    if name == "get_user_history":
+        # エージェントが渡す user_id は無視し、認証済みセッションの ID を使う
+        history = db.get_history(user_id=session_user_id)
+        return json.dumps(history, ensure_ascii=False)
+```
+
+**セキュリティ上の最大の利点**: エージェントは「データが欲しい」と言うだけ。実際のDB問い合わせはクライアントコードが認証済みユーザーIDで実行する。エージェントの引数を信用する必要がない。
+
+検証スクリプト: `agent/create_fc_agent.py`, `agent/test_fc_agent.py`
+
+### ② assistant ロール注入（代替）
+
+Function Calling が使えない場合（既存エージェントを変更できない等）のフォールバック。
 
 ```python
 response = client.responses.create(
@@ -141,22 +167,36 @@ response = client.responses.create(
 )
 ```
 
-### 検証結果（test_assistant_context, test_context_injection_comparison）
+- モデルは `assistant` を「自分の過去の出力」と解釈 → 参照データとして扱う
+- `user` ロール注入より安全だが、データがプロンプト内に直接入る点は同じ
 
-- テスト1（user に履歴）: ✅ 動作。履歴を参照して回答
-- テスト2（assistant に履歴）: ✅ 動作。同等品質で回答の構造がよりきれい
-- テスト3/4（インジェクション試行）: ✅ Azure コンテンツフィルターが jailbreak を検出してブロック
+### ③ user ロール注入（非推奨）
 
-### Conversation ID との相性
+データを「ユーザーの指示」として解釈するため、プロンプトインジェクションのリスクが高い。トレースログでもユーザー入力とコンテキストが区別できない。
 
-| | ステートレス + assistant | Conversation ID + assistant |
-|---|---|---|
-| トレースでの分離 | ✅ 明確（assistant=注入、user=入力） | ❌ エージェントの実際の応答と注入コンテキストが混在 |
-| コンテキスト更新 | ✅ 毎回最新に差し替え可能 | ❌ 会話に固定される |
-| マルチターン | アプリが履歴を管理 | サーバーが自動管理 |
+### 検証結果
 
-**assistant コンテキスト注入パターンはステートレス運用と相性が良い。**
-Conversation ID を使う場合は、ツール経由で取得させるか、Conversation ID を使わず毎回 input を自前構築する方がクリーン。
+- Function Calling: ✅ エージェントが `get_user_history` を自律的に呼び出し、モック履歴を踏まえて回答（`test_fc_agent.py`）
+- **FC 事前注入**: ✅ `function_call` + `function_call_output` を input に事前注入。FunctionTool 登録不要で 1 往復完結。データ反映 3/3 チェック通過（`test_input_patterns.py` パターン 0）
+- assistant 注入: ⚠️ HTTP は成功するが、**Foundry エージェントはデータを回答に反映しない**（`test_input_patterns.py` パターン A3）。`test_assistant_context.py` での「動作」は回答の品質差によるもので、データ反映の信頼性は低い
+- user 注入: ✅ 動作するが推奨しない（`test_context_injection_comparison.py`）
+- インジェクション試行: ✅ Azure コンテンツフィルターが jailbreak を検出してブロック
+- **その他の input type**: developer ロール・instructions パラメータは HTTP 400。file_search_call・mcp_call は HTTP OK だがデータ無視。item_reference は部分的動作のみ。詳細は `docs/sdk-architecture.md` の「Responses API input に渡せる全タイプの検証」セクション参照
+
+### 選定ガイド
+
+```
+エージェント定義を変更できる？
+  ├─ Yes → ① Function Calling（推奨・エージェントが自律的にデータ要求）
+  └─ No
+       └─ ユーザー固有データの注入が必要？
+            ├─ Yes → FC 事前注入（function_call + function_call_output を input に事前構築）
+            │        ※ FunctionTool 登録不要、1往復、ポータル互換性維持
+            │        ※ 詳細は docs/sdk-architecture.md 参照
+            └─ No → エージェントをそのまま使用
+```
+
+> **注意**: ② assistant ロール注入は HTTP レベルでは受け入れられるが、Foundry エージェントが注入データを回答に反映しないことが検証で判明した（`test_input_patterns.py`）。信頼性の高いデータ注入には FC 事前注入を使うこと。
 
 ## 7. 検証結果（会話ステート・RBAC）
 
@@ -193,7 +233,8 @@ az role assignment list --assignee <agent-app-principal-id> --all
 
 1. **Foundry 側**: `developer`/`system` ロール・`instructions` パラメータを拒否 → Instructions の上書き不可
 2. **Azure 側**: コンテンツフィルターが jailbreak パターンを検出・ブロック
-3. **設計側**: `assistant` ロールでコンテキスト注入 → ユーザー入力と構造的に分離
+3. **設計側（推奨）**: Function Calling でデータ取得 → クライアントが認証済みユーザーのデータのみ返す。エージェントの引数は信用不要
+4. **設計側（代替）**: `assistant` ロールでコンテキスト注入 → ユーザー入力と構造的に分離
 
 ## 9. 認証の注意点
 
@@ -219,3 +260,5 @@ az role assignment list --assignee <agent-app-principal-id> --all
 | `test_dev_roles.py` | 開発エンドポイントでの developer / instructions 拒否確認 |
 | `test_assistant_context.py` | assistant ロールのコンテキスト注入 + インジェクション耐性 |
 | `test_context_injection_comparison.py` | user vs assistant の実用ケース比較（経費精算履歴） |
+| `agent/create_fc_agent.py` | Function Calling 付きエージェント作成（file_search + get_user_history） |
+| `agent/test_fc_agent.py` | Function Calling の一連フロー検証（function_call → 実行 → 結果返送 → 最終回答） |

@@ -71,3 +71,37 @@
 |------|-----------------|---------------|---------|
 | SDK (`05_create_eval_completeness_only.py`) | 指定なし | 正常 | 3/6 FAIL（期待通り） |
 | Portal（ダミー値 "Nothing"） | "Nothing" | 破壊的に劣化 | 6/6 FAIL（全滅） |
+
+---
+
+## 3. FunctionTool 付きエージェントがポータルのプレイグラウンドで動作しない
+
+**報告日**: 2026-04-14
+
+**対象**: Foundry Portal > エージェント > チャット（プレイグラウンド）
+
+**現象**:
+- SDK で `FunctionTool` を登録したエージェントに対し、ポータルのプレイグラウンドで Function Calling を発火させる質問を送信
+- エージェントは `get_user_history` を呼ぶ判断をするが、ポータル側にクライアント実行ハンドラがない
+- 結果: `No tool output found for function call call_dJTRtvHVURonoAREzC0bHuN3.` エラーで会話が停止
+
+**影響**:
+- FunctionTool を持つエージェントは**ポータルのプレイグラウンドでテストできない**
+- Function Calling を発火しない質問（例: 「こんにちは」）も、エージェントが予防的に関数を呼ぶ場合がある
+- **テストは SDK スクリプト経由のみ**に限定される
+
+**関連する確認事項**:
+- ポータルで FunctionTool の定義は**表示されない**（存在は認識している — メタデータに `get_user_history` と表示）
+- ポータルで Instructions を編集・保存しても FunctionTool は**消えない**（version 2 → 3 → 4 で検証済み）
+- 公式ドキュメントには「ポータルでは関数定義の追加、削除、更新はサポートされていません」と記載があるが、**実行不可の記載はない**
+
+**期待動作**（いずれか）:
+1. プレイグラウンドで FunctionTool のモックレスポンスを入力できる UI を提供
+2. または、FunctionTool が登録されたエージェントに対し「この機能はプレイグラウンドでテストできません。SDK をご利用ください」と明示的に案内
+3. または、プレイグラウンドでは FunctionTool を無視して file_search 等のサーバーサイドツールのみで回答するフォールバック
+
+**再現手順**:
+1. SDK で `FunctionTool` 付きエージェントを作成（`agent/create_fc_agent.py`）
+2. ポータルでエージェントを開く → チャットタブ
+3. 「過去の履歴を10件取ってきてほしい」と入力
+4. → `No tool output found for function call call_...` エラー
