@@ -1,0 +1,164 @@
+name: "Agent Evaluation"
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent-ids:
+        description: "Agent ID (name:version) 例: travel-expense-helpdesk:1"
+        required: true
+        default: "travel-expense-helpdesk:1"
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Evaluation
+        uses: microsoft/ai-agent-evals@v3-beta
+        with:
+          azure-ai-project-endpoint: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+          deployment-name: gpt-5.4
+          agent-ids: ${{ inputs.agent-ids }}
+          data-path: ${{ github.workspace }}/.github/eval-data.json
+
+      - name: Check Pass Rate
+        id: check
+        shell: bash
+        env:
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys
+
+          from azure.ai.projects import AIProjectClient
+          from azure.identity import DefaultAzureCredential
+
+          endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+          cred = DefaultAzureCredential()
+          client = AIProjectClient(endpoint=endpoint, credential=cred)
+          oc = client.get_openai_client()
+
+          # 最新の Evaluation を取得
+          evals_page = oc.evals.list(limit=1)
+          latest_eval = next(iter(evals_page), None)
+          if not latest_eval:
+              print("No evaluations found")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("result=pass\n")
+              sys.exit(0)
+
+          print(f"Latest eval: {latest_eval.id}")
+
+          # 最新の Run を取得
+          runs_page = oc.evals.runs.list(eval_id=latest_eval.id, limit=1)
+          latest_run = next(iter(runs_page), None)
+          if not latest_run:
+              print("No runs found")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("result=pass\n")
+              sys.exit(0)
+
+          print(f"Latest run: {latest_run.id}, status: {latest_run.status}")
+
+          # result_counts から pass/fail を判定
+          rc = latest_run.result_counts
+          print(f"Result counts: {rc}")
+
+          passed = rc.get("passed", 0) if isinstance(rc, dict) else getattr(rc, "passed", 0)
+          failed = rc.get("failed", 0) if isinstance(rc, dict) else getattr(rc, "failed", 0)
+          errored = rc.get("errored", 0) if isinstance(rc, dict) else getattr(rc, "errored", 0)
+          total = passed + failed + errored
+
+          # per_testing_criteria_results から詳細を取得
+          criteria = getattr(latest_run, "per_testing_criteria_results", []) or []
+          details = []
+          for c in criteria:
+              c_dict = c if isinstance(c, dict) else (c.__dict__ if hasattr(c, '__dict__') else {})
+              name = c_dict.get("testing_criteria", c_dict.get("name", "unknown"))
+              c_passed = c_dict.get("passed", 0)
+              c_failed = c_dict.get("failed", 0)
+              c_total = c_passed + c_failed
+              rate = (c_passed / c_total * 100) if c_total > 0 else 0
+              details.append(f"  {name}: {c_passed}/{c_total} ({rate:.1f}%)")
+              print(f"  {name}: passed={c_passed}, failed={c_failed}, rate={rate:.1f}%")
+
+          detail_text = "\n".join(details) if details else f"  passed={passed}, failed={failed}"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              if failed > 0:
+                  print(f"FAIL: {passed}/{total} passed, {failed} failed")
+                  f.write("result=fail\n")
+                  f.write(f"summary={passed}/{total} passed, {failed} failed\n")
+                  f.write(f"details<<DELIM\n{detail_text}\nDELIM\n")
+              else:
+                  print(f"PASS: {passed}/{total} passed")
+                  f.write("result=pass\n")
+          PYEOF
+
+      - name: Create Issue on Failure
+        if: always() && steps.check.outputs.result == 'fail'
+        id: create-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const agentIds = '${{ inputs.agent-ids }}';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const summary = '${{ steps.check.outputs.summary }}';
+            const details = `${{ steps.check.outputs.details }}`;
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Agent evaluation failed: ${agentIds}`,
+              body: [
+                `## 評価失敗`,
+                ``,
+                `| 項目 | 値 |`,
+                `|------|-----|`,
+                `| Agent | \`${agentIds}\` |`,
+                `| Workflow Run | [#${context.runId}](${runUrl}) |`,
+                `| Triggered by | @${context.actor} |`,
+                ``,
+                `### 評価結果`,
+                ``,
+                `${summary}`,
+                ``,
+                '```',
+                details,
+                '```',
+              ].join('\n'),
+              labels: ['evaluation']
+            });
+            core.setOutput('issue-number', issue.data.number);
+
+      - name: Assign Copilot to Issue
+        if: always() && steps.create-issue.outputs.issue-number
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.REPO_FG_TOKEN }}
+        run: |
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/issues/${{ steps.create-issue.outputs.issue-number }}/assignees \
+            --input - <<< '{
+            "assignees": ["copilot-swe-agent[bot]"],
+            "agent_assignment": {
+              "target_repo": "${{ github.repository }}",
+              "base_branch": "main"
+            }
+          }'
