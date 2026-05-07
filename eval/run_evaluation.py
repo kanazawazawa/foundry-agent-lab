@@ -1,8 +1,8 @@
 """
 エージェントのバッチ評価を実行する。
 
-Response-Completeness（正確性）、Coherence（一貫性）、Task Adherence（指示遵守）、
-Intent Resolution（意図解決）の 4 つの評価器でエージェントを評価し、結果を表示・保存する。
+Response-Completeness（応答の完全性）と Coherence（一貫性）の 2 つの評価器で
+エージェントを評価し、結果を表示・保存する。
 
 Usage:
     python eval/run_evaluation.py

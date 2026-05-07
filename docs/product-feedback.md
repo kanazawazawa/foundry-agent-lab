@@ -14,8 +14,9 @@
 - 入力しないと「保存」して次のステップに進めない
 
 **期待動作**:
-- Built-in evaluator には内部の prompty テンプレート（例: [coherence.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_coherence/coherence.prompty)）が組み込まれているため、開発者プロンプトは**任意（optional）であるべき**
-- SDK/API 経由（OpenAI Evals API）で同じ evaluator を作成する場合、`deployment_name` のみで構成でき、プロンプトの明示指定は不要
+- SDK/API 経由（OpenAI Evals API）で同じ built-in evaluator を作成する場合、`evaluator_name` と `deployment_name` で構成でき、プロンプトの明示指定は不要
+- classic / ローカル実行向けの Azure AI Evaluation SDK では一部の品質系 evaluator の OSS `.prompty`（例: [coherence.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_coherence/coherence.prompty)）を確認できる。ただし、現行 Foundry cloud evaluation の `builtin.*` evaluator がそれと同一であるという記載は確認していないため、同一性は前提にしない
+- Built-in evaluator を利用するだけであれば、開発者プロンプトは**任意（optional）であるべき**
 
 **影響**:
 - ユーザーが意味のないダミー値（例: "Nothing"）を入れて回避する必要がある
@@ -75,7 +76,7 @@
 **比較**:
 | 手段 | 開発者メッセージ | Agent 応答品質 | 評価結果 |
 |------|-----------------|---------------|---------|
-| SDK (`05_create_eval_completeness_only.py`) | 指定なし | 正常 | 3/6 FAIL（期待通り） |
+| SDK (`eval/create_eval_completeness_only.py`) | 指定なし | 正常 | 3/6 FAIL（期待通り） |
 | Portal（ダミー値 "Nothing"） | "Nothing" | 破壊的に劣化 | 6/6 FAIL（全滅） |
 
 ---

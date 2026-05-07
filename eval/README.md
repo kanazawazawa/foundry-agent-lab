@@ -43,7 +43,7 @@ AI エージェントの品質を CI で自動評価し、不合格なら Copilo
 ### 使用技術
 
 - **Microsoft Foundry** — Prompt Agent + file_search + gpt-5.4
-- **Azure AI Evaluation** — response_completeness / coherence の 2 評価器
+- **Foundry cloud evaluation** — response_completeness / coherence の 2 評価器
 - **GitHub Actions** — `microsoft/ai-agent-evals@v3-beta` + OpenAI Evals API でスコア判定
 - **Copilot Coding Agent** — Issue 自動アサインで修正 PR を自動生成
 
@@ -181,6 +181,8 @@ gh pr list --state open | awk '{print $1}' | xargs -I{} gh pr close {}
 
 `.github/eval-data.json` に定義した 6 件の `query` + `ground_truth` を使い、2 つの built-in evaluator を実行する。どちらも **LLM-as-Judge**（指定した GPT モデルが採点者になる）方式で、各テストケースごとにスコア 1–5 + reason を返す。デフォルトのパスしきい値は **3** で、3 以上なら pass。
 
+このリポジトリの評価は、現行 Foundry の cloud evaluation で `builtin.*` evaluator を指定して実行している。以下の `.prompty` は classic / ローカル実行向け Azure AI Evaluation SDK (`azure-ai-evaluation`) に含まれる OSS の参考情報であり、現行 Foundry cloud evaluation の `builtin.*` evaluator が同一のプロンプトを使っているという記載は確認していない。
+
 #### `builtin.response_completeness`（応答の完全性）
 
 - **カテゴリ**: RAG エバリュエーター > システム評価
@@ -189,7 +191,7 @@ gh pr list --state open | awk '{print $1}' | xargs -I{} gh pr close {}
 - **仕組み**: LLM Judge が ground_truth に含まれるキーポイントをリストアップし、response がそれらをカバーしているかを照合する
 - **このデモでの役割**: バグ検出のメイン。「日当 2,500 円」と回答すると ground_truth の「3,000 円」と食い違うため、recall が低くスコアが下がり fail になる
 
-**プロンプト（Definition 部分・原文）** — [response_completeness.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_response_completeness/response_completeness.prompty)
+**参考: classic / ローカル SDK の OSS prompty（Definition 部分・原文）** — [response_completeness.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_response_completeness/response_completeness.prompty)
 
 > **Completeness** refers to how accurately and thoroughly a response represents the information provided in the ground truth. It considers both the inclusion of all relevant statements and the correctness of those statements. Each statement in the ground truth should be evaluated individually to determine if it is accurately reflected in the response without missing any key information. The scale ranges from 1 to 5, with higher numbers indicating greater completeness.
 
@@ -223,7 +225,7 @@ gh pr list --state open | awk '{print $1}' | xargs -I{} gh pr close {}
 - **仕組み**: LLM Judge が「質問に直接対応しているか」「文と文のつながりが論理的か」「適切な接続・遷移があるか」を採点する
 - **このデモでの役割**: たとえバグ入りの誤った数値を回答しても、文としては筋が通っているため常に PASS になる。response_completeness との対比で「事実の正しさと文章の質は別軸」であることを示す
 
-**プロンプト（Definition 部分・原文）** — [coherence.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_coherence/coherence.prompty)
+**参考: classic / ローカル SDK の OSS prompty（Definition 部分・原文）** — [coherence.prompty](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/evaluation/azure-ai-evaluation/azure/ai/evaluation/_evaluators/_coherence/coherence.prompty)
 
 > **Coherence** refers to the logical and orderly presentation of ideas in a response, allowing the reader to easily follow and understand the writer's train of thought. A coherent answer directly addresses the question with clear connections between sentences and paragraphs, using appropriate transitions and a logical sequence of ideas.
 

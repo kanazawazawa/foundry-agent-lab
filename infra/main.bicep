@@ -15,16 +15,17 @@ param modelSkuName string = 'GlobalStandard'
 @description('モデルの TPM キャパシティ（千トークン/分）')
 param modelCapacity int = 10
 
-// デプロイのたびに新しい環境を作成（utcNow は毎回異なる値を返す）
-param timestamp string = utcNow()
-var suffix = uniqueString(timestamp)
+@description('環境を識別する名前。別環境を作る場合は値を変える')
+param environmentName string = 'agent-eval-demo'
+
+var suffix = uniqueString(subscription().id, environmentName, location)
 var rgName = 'rg-agent-eval-demo-${suffix}'
 var accountName = 'ai-eval-${suffix}'
 var projectName = 'foundry-agent-eval'
 
 var commonTags = {
-  SecurityControl: 'Ignore'
-  CostControl: 'Ignore'
+  Purpose: 'foundry-agent-eval-demo'
+  ManagedBy: 'bicep'
 }
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {

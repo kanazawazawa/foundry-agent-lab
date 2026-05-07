@@ -28,8 +28,8 @@ param modelCapacity int = 10
 param deployerPrincipalId string
 
 var commonTags = {
-  SecurityControl: 'Ignore'
-  CostControl: 'Ignore'
+  Purpose: 'foundry-agent-eval-demo'
+  ManagedBy: 'bicep'
 }
 
 // AI Services アカウント（Foundry のホスト）
@@ -45,7 +45,7 @@ resource aiServices 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   properties: {
     customSubDomainName: accountName
     allowProjectManagement: true
-    disableLocalAuth: false
+    disableLocalAuth: true
   }
 }
 

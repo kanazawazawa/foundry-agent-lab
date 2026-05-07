@@ -113,12 +113,16 @@ jobs:
         if: always() && steps.check.outputs.result == 'fail'
         id: create-issue
         uses: actions/github-script@v7
+        env:
+          AGENT_IDS: ${{ inputs.agent-ids }}
+          EVAL_SUMMARY: ${{ steps.check.outputs.summary }}
+          EVAL_DETAILS: ${{ steps.check.outputs.details }}
         with:
           script: |
-            const agentIds = '${{ inputs.agent-ids }}';
+            const agentIds = process.env.AGENT_IDS || '';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const summary = '${{ steps.check.outputs.summary }}';
-            const details = `${{ steps.check.outputs.details }}`;
+            const summary = process.env.EVAL_SUMMARY || '';
+            const details = process.env.EVAL_DETAILS || '';
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
